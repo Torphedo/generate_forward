@@ -75,17 +75,20 @@ void get_module_from_path(const char* filepath, char* out_name) {
 IMAGE_SECTION_HEADER get_section_header(const char* name, uint8_t* dll_data) {
 	IMAGE_DOS_HEADER* dos_header = (IMAGE_DOS_HEADER*)dll_data;
 	IMAGE_NT_HEADERS* nt_header =  (IMAGE_NT_HEADERS*)(dll_data + dos_header->e_lfanew);
-	uint32_t section_header_rva = dos_header->e_lfanew + sizeof(*nt_header);
 
+	// Get section headers
+	uint32_t section_header_rva = dos_header->e_lfanew + sizeof(*nt_header);
 	IMAGE_SECTION_HEADER* headers = (IMAGE_SECTION_HEADER*)(dll_data + section_header_rva);
 
+	// Search through the sections for our target
 	for (uint32_t i = 0; i < nt_header->FileHeader.NumberOfSections; i++) {
-		unsigned char* cur_name = &headers[i].Name[0];
-		if (memcmp(name, cur_name, strlen(name))) {
+		char* cur_name = (char*)headers[i].Name;
+		if (strncmp(name, cur_name, strlen(name)) == 0) {
 			return headers[i];
 		}
 	}
 
+	// Oh well.
 	IMAGE_SECTION_HEADER failure = {0};
 	return failure;
 }
@@ -108,6 +111,7 @@ int main(int argc, char** argv) {
 	uint8_t* dll = read_entire_file(dll_path);
 	if (dll == NULL) {
 		printf("Failed to load DLL %s\n", dll_path);
+		return 1;
 	}
 
 	FILE* output_handle = fopen(output_file, "wb");
@@ -127,17 +131,15 @@ int main(int argc, char** argv) {
 		free(dll);
 		return 1;
 	}
-	uint32_t rva_export = export_dir->VirtualAddress;
 
 	// Get info about text section so we can get export directory info.
 	IMAGE_SECTION_HEADER text_section = get_section_header(".text", dll);
-	int32_t text_offset = text_section.PointerToRawData - text_section.VirtualAddress;
 
 	// Export directory RVA is relative to .text, so we add this offset to make
 	// it relative to the image base.
-	char* text_base = (char*)(dll + text_offset);
+	char* text_base = (char*)(dll - text_section.VirtualAddress);
 
-	IMAGE_EXPORT_DIRECTORY* exports = (IMAGE_EXPORT_DIRECTORY*)(text_base + rva_export);
+	IMAGE_EXPORT_DIRECTORY* exports = (IMAGE_EXPORT_DIRECTORY*)(text_base + export_dir->VirtualAddress);
 	uint32_t* name_off_table = (uint32_t*)(text_base + exports->AddressOfNames);
 	uint32_t count = exports->NumberOfNames;
 
